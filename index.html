@@ -1,0 +1,610 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>つもり貯金DAO — ロック付き振替プロトタイプ</title>
+<style>
+  :root{
+    --bg:#fafafa;--card:#fff;--muted:#6b7280;--accent:#4a90e2;--dark:#111827;
+  }
+  html,body{height:100%;margin:0;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Noto Sans JP,system-ui,Roboto,"Helvetica Neue",Arial;padding:0;background:var(--bg);color:var(--dark)}
+  .wrap{max-width:420px;margin:0 auto;padding:18px}
+  h1{font-size:20px;margin:0 0 8px;font-weight:700}
+  .card{background:var(--card);padding:14px;border-radius:14px;box-shadow:0 2px 8px rgba(0,0,0,0.04);margin-bottom:12px}
+  .balance{font-size:28px;font-weight:700}
+  .muted{color:var(--muted)}
+  .row{display:flex;gap:8px;align-items:center}
+  .btn{display:inline-block;padding:10px 12px;border-radius:12px;text-align:center;background:var(--dark);color:#fff;font-weight:600;cursor:pointer}
+  .btn-ghost{background:transparent;border:1px solid #e5e7eb;color:var(--dark)}
+  .btn-accent{background:var(--accent)}
+  .small{font-size:13px}
+  .category-list{display:flex;gap:8px;flex-wrap:wrap}
+  .chip{padding:8px 10px;border-radius:12px;background:#f3f4f6;border:1px solid #e5e7eb;cursor:pointer;font-size:14px}
+  .goal{margin-top:10px}
+  .progress{height:10px;background:#eee;border-radius:8px;overflow:hidden}
+  .prog-inner{height:100%;background:var(--accent);width:0%}
+  .history-item{display:flex;justify-content:space-between;padding:10px;border-radius:10px;background:#fff;margin-top:8px}
+  .flex-between{display:flex;justify-content:space-between;align-items:center}
+  .smallmuted{font-size:12px;color:var(--muted)}
+  .modal{display:none;position:fixed;inset:0;background:rgba(0,0,0,0.45);align-items:center;justify-content:center;padding:16px;z-index:999}
+  .modal-inner{background:#fff;padding:16px;border-radius:14px;width:100%;max-width:420px}
+  input[type="number"],input[type="text"],select,textarea{width:100%;padding:10px;border-radius:10px;border:1px solid #e5e7eb;margin-bottom:10px;font-size:15px}
+  .grid{display:grid;gap:8px}
+  .grid-2{grid-template-columns:1fr 1fr}
+  canvas{width:100%;height:180px;border-radius:10px;background:#fff}
+  .divider{height:1px;background:#eee;margin:12px 0}
+  footer{padding:12px;text-align:center;color:var(--muted);font-size:13px}
+  .locked-tag{background:#fff3cd;border:1px solid #ffe8a1;color:#92400e;padding:6px 8px;border-radius:8px;font-size:12px}
+  @media (max-width:480px){.wrap{padding:14px}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>つもり貯金DAO（ロック対応）</h1>
+
+  <!-- Balance & Treasury -->
+  <div class="card">
+    <div class="smallmuted">トレジャリー残高</div>
+    <div class="balance" id="treasury">0 JPYC</div>
+
+    <div style="margin-top:10px">
+      <div class="smallmuted">合計（トレジャリー + 目標）</div>
+      <div id="totalAll" class="smallmuted">0 JPYC</div>
+    </div>
+
+    <div style="margin-top:12px" class="row">
+      <div class="btn" onclick="openModal('add')">つもり貯金追加（トレジャリーへ）</div>
+      <div class="btn btn-ghost" onclick="openModal('mission')">ミッション</div>
+      <div style="margin-left:auto"><button class="btn btn-ghost" onclick="openModalConvert()">疑似ロック（直接ステーク）</button></div>
+    </div>
+  </div>
+
+  <!-- Categories -->
+  <div class="card">
+    <div class="smallmuted">カテゴリーで追加</div>
+    <div class="category-list" id="categoryList"></div>
+    <div style="margin-top:10px" class="grid grid-2">
+      <button class="btn btn-accent" onclick="quickToTreasury('カフェ',300)">我慢：カフェ 300</button>
+      <button class="btn btn-accent" onclick="quickToTreasury('スイーツ',200)">我慢：スイーツ 200</button>
+    </div>
+  </div>
+
+  <!-- Goals -->
+  <div class="card">
+    <div class="smallmuted">目標（Goals）</div>
+    <div id="goalsContainer"></div>
+    <div style="margin-top:10px" class="grid grid-2">
+      <button class="btn btn-ghost" onclick="openModal('newGoal')">目標を追加</button>
+      <button class="btn" onclick="openModal('manageGoals')">目標管理</button>
+    </div>
+  </div>
+
+  <!-- History -->
+  <div class="card">
+    <div class="flex-between">
+      <div class="smallmuted">貯金履歴</div>
+      <div class="smallmuted"><button class="btn-ghost" onclick="exportWhole()">Export</button></div>
+    </div>
+    <div id="historyList"></div>
+  </div>
+
+  <!-- Reports -->
+  <div class="card">
+    <div class="smallmuted">月間レポート</div>
+    <canvas id="chartCanvas"></canvas>
+    <div style="margin-top:8px" class="flex-between smallmuted">
+      <div>合計（今月）</div><div id="monthTotal">0 JPYC</div>
+    </div>
+  </div>
+
+  <!-- DAO & NFT -->
+  <div class="card">
+    <div class="smallmuted">DAO（シミュ）</div>
+    <div style="margin-top:8px" class="smallmuted">全ユーザー合計（ローカル合算）: <span id="globalTotal">0</span> JPYC</div>
+    <div style="margin-top:8px" class="grid">
+      <button class="btn" onclick="openModal('dao')">エクスポート/インポート</button>
+      <button class="btn btn-ghost" onclick="openModal('vote')">投票</button>
+    </div>
+    <div class="divider"></div>
+    <div class="smallmuted">NFT / 共有</div>
+    <div style="margin-top:8px" class="grid">
+      <button class="btn btn-accent" onclick="generateBadge()">つもりNFTを生成</button>
+      <button class="btn btn-ghost" onclick="generateReceipt()">つもりレシートを生成</button>
+    </div>
+  </div>
+
+  <footer>プロトタイプ — 実運用にはブロックチェーン連携と法的検討が必要</footer>
+</div>
+
+<!-- MODAL -->
+<div class="modal" id="modal">
+  <div class="modal-inner" id="modalInner"></div>
+</div>
+
+<script>
+/*
+  Enhanced prototype with:
+  - Treasury (state.treasury)
+  - Allocate to Goal with lock options (30/90/180/360)
+  - Locked entries show remaining days
+  - Auto-unlock & interest simulation on render
+  - APY per locked deposit (user input at allocation time)
+*/
+
+// ---------- State & Persistence ----------
+let state = {
+  treasury: 0,
+  history: [], // each: {id, amount, category, date, goalId, note, lockedUntil (iso), apr}
+  goals: [], // each: {id,title,target}
+  missions: [],
+  dao: { total:0 }
+};
+
+function loadState(){
+  try{
+    const s = localStorage.getItem('tsumori_state_lock_v1');
+    if(s) state = JSON.parse(s);
+  }catch(e){ console.warn(e) }
+}
+function saveState(){ localStorage.setItem('tsumori_state_lock_v1', JSON.stringify(state)); }
+
+loadState();
+
+// defaults
+if(!state.goals || state.goals.length===0){
+  state.goals = [{id:genId(), title:'旅行（夏）', target:30000}, {id:genId(), title:'家電購入', target:40000}];
+}
+if(!state.missions || state.missions.length===0){
+  state.missions = [{id:genId(), title:'コーヒー我慢', amount:200, period:'daily', active:true},{id:genId(), title:'外食我慢', amount:800, period:'weekly', active:true}];
+}
+
+// ---------- Helpers ----------
+function genId(){ return Math.random().toString(36).slice(2,9); }
+function todayStr(){ const d=new Date(); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`; }
+function nowIso(){ return new Date().toISOString(); }
+function addDaysIso(days){ const d=new Date(Date.now()+days*24*3600*1000); return d.toISOString().slice(0,10); }
+function daysRemaining(isoDate){
+  if(!isoDate) return 0;
+  const end = new Date(isoDate+'T00:00:00');
+  const diff = Math.ceil((end - new Date())/(1000*60*60*24));
+  return diff;
+}
+function isPast(isoDate){
+  if(!isoDate) return false;
+  return new Date(isoDate+'T00:00:00') <= new Date();
+}
+function safeNum(v){ return Number(v||0); }
+
+// ---------- DOM refs ----------
+const treasuryEl = ()=>document.getElementById('treasury');
+const totalAllEl = ()=>document.getElementById('totalAll');
+const goalsContainer = ()=>document.getElementById('goalsContainer');
+const catListEl = ()=>document.getElementById('categoryList');
+const historyListEl = ()=>document.getElementById('historyList');
+const modal = document.getElementById('modal');
+const modalInner = document.getElementById('modalInner');
+const monthTotalEl = ()=>document.getElementById('monthTotal');
+const daoTotalEl = ()=>document.getElementById('daoTotal');
+const globalTotalEl = ()=>document.getElementById('globalTotal');
+const chartCanvas = document.getElementById('chartCanvas');
+
+// categories
+const defaultCategories = [
+  {id:'coffee',label:'カフェ'},
+  {id:'snack',label:'スイーツ'},
+  {id:'transport',label:'交通'},
+  {id:'shopping',label:'買い物'},
+  {id:'food',label:'外食'}
+];
+
+// ---------- Core render ----------
+function render(){
+  // auto-unlock if any lockedUntil passed
+  state.history.forEach(h=>{
+    if(h.lockedUntil && isPast(h.lockedUntil)){
+      // unlock: compute interest and add interest txn
+      // only if not already flagged as unlocked (we check by removing lockedUntil)
+      if(h.lockedUntil){ // compute interest based on stored apr and original lock days
+        const lockDate = new Date(h.lockedUntil + 'T00:00:00');
+        // approximate lock days: use apr and amount; but we can compute days from note if stored; instead compute days by comparing when it was allocated
+        // For simplicity, we assume interest = amount * apr% * (lockDays/365)
+        // If we stored apr and lockDays in tx, use them:
+        if(h.apr && h.lockDays){
+          const interest = Math.round((h.amount * (h.apr/100) * (h.lockDays/365)) * 100) / 100;
+          if(interest>0){
+            const itx = {id:genId(), amount:interest, category:'利息', date: new Date().toLocaleString(), goalId: h.goalId, note:'ロック利息'};
+            state.history.unshift(itx);
+          }
+        }
+      }
+      // mark as unlocked by clearing lockedUntil
+      h.lockedUntil = null;
+      h.apr = h.apr || 0;
+      h.lockDays = h.lockDays || 0;
+    }
+  });
+
+  // update treasury display
+  treasuryEl().textContent = `${safeNum(state.treasury)} JPYC`;
+
+  // total all
+  const goalsSum = state.history.filter(h=>h.goalId && !h.lockedUntil).reduce((s,h)=>s+(h.amount||0),0);
+  const totalAll = safeNum(state.treasury) + goalsSum + state.history.filter(h=>h.category==='利息').reduce((s,h)=>s+(h.amount||0),0);
+  totalAllEl().textContent = `${totalAll} JPYC`;
+
+  // goals render
+  const container = goalsContainer();
+  container.innerHTML = '';
+  state.goals.forEach(g=>{
+    const goalSumAll = state.history.filter(h=>h.goalId===g.id).reduce((s,h)=>s+(h.amount||0),0);
+    const lockedSum = state.history.filter(h=>h.goalId===g.id && h.lockedUntil).reduce((s,h)=>s+(h.amount||0),0);
+    const progressPct = Math.min(Math.round((goalSumAll / g.target) * 100),100);
+    const el = document.createElement('div');
+    el.className = 'goal card';
+    el.innerHTML = `
+      <div class="flex-between">
+        <div style="font-weight:700">${escapeHtml(g.title)}</div>
+        <div class="smallmuted">${goalSumAll} / ${g.target} JPYC</div>
+      </div>
+      <div class="progress" style="margin-top:8px"><div class="prog-inner" style="width:${progressPct}%"></div></div>
+      <div style="margin-top:8px" class="flex-between smallmuted">
+        <div>ロック中：${lockedSum} JPYC</div>
+        <div>APY想定: <span id="apy_${g.id}">${g.apy||0}%</span></div>
+      </div>
+      <div style="margin-top:8px" class="grid grid-2">
+        <button class="btn btn-ghost" onclick="openModal('allocate','${g.id}')">目標に振替（ロック）</button>
+        <button class="btn" onclick="openModal('viewGoal','${g.id}')">目標詳細</button>
+      </div>
+    `;
+    container.appendChild(el);
+  });
+
+  // categories
+  const catEl = catListEl();
+  catEl.innerHTML = '';
+  defaultCategories.forEach(c=>{
+    const chip = document.createElement('div');
+    chip.className = 'chip';
+    chip.textContent = c.label;
+    chip.onclick = ()=>openModal('quick',c.label);
+    catEl.appendChild(chip);
+  });
+
+  // history
+  historyListEl().innerHTML = '';
+  state.history.slice(0,80).forEach(h=>{
+    const d = document.createElement('div');
+    d.className = 'history-item';
+    const lockInfo = h.lockedUntil ? `<div class="locked-tag">${daysRemaining(h.lockedUntil)}日後解除</div>` : '';
+    d.innerHTML = `<div>
+        <div style="font-weight:600">+${h.amount} JPYC ${h.category?('— '+escapeHtml(h.category)):''}</div>
+        <div class="smallmuted">${h.note||''}</div>
+      </div>
+      <div class="smallmuted">${h.date}<br/>${lockInfo}</div>`;
+    historyListEl().appendChild(d);
+  });
+
+  // month report
+  renderChart();
+
+  // month total
+  const mTotal = state.history.filter(h=>isThisMonth(h.date)).reduce((s,h)=>s+h.amount,0);
+  monthTotalEl().textContent = `${mTotal} JPYC`;
+
+  // dao global
+  globalTotalEl().textContent = (loadGlobal().total || 0);
+
+  saveState();
+}
+
+// ---------- Treasury & Adding ----------
+function quickToTreasury(cat, amt){
+  state.treasury = safeNum(state.treasury) + Number(amt);
+  state.history.unshift({id:genId(), amount:amt, category:cat, date: new Date().toLocaleString(), note:'トレジャリー入金'});
+  saveState(); render();
+}
+
+function openModal(type, arg){
+  modal.style.display='flex';
+  if(type==='add'){
+    modalInner.innerHTML = `
+      <div style="display:flex;justify-content:space-between;align-items:center"><div style="font-weight:700">トレジャリーへ入金</div><div style="cursor:pointer" onclick="closeModal()">✕</div></div>
+      <div style="margin-top:8px" class="smallmuted">金額（JPYC）</div>
+      <input id="m_amount" type="number" placeholder="例: 500" />
+      <div class="smallmuted">カテゴリー（任意）</div>
+      <input id="m_cat" type="text" placeholder="例: カフェ" />
+      <div style="display:flex;gap:8px;margin-top:8px">
+        <button class="btn btn-ghost" onclick="closeModal()">キャンセル</button>
+        <button class="btn" onclick="confirmAddToTreasury()">入金</button>
+      </div>
+    `;
+  } else if(type==='quick'){
+    modalInner.innerHTML = `
+      <div style="display:flex;justify-content:space-between;align-items:center"><div style="font-weight:700">クイック入金 — ${escapeHtml(arg)}</div><div style="cursor:pointer" onclick="closeModal()">✕</div></div>
+      <div style="margin-top:8px" class="smallmuted">金額（JPYC）</div>
+      <input id="m_amount" type="number" value="300" />
+      <div style="margin-top:8px" class="smallmuted">メモ</div>
+      <input id="m_note" type="text" placeholder="例: 我慢した" />
+      <div style="display:flex;gap:8px;margin-top:8px">
+        <button class="btn btn-ghost" onclick="closeModal()">キャンセル</button>
+        <button class="btn" onclick="confirmAddQuick('${escapeHtml(arg)}')">入金</button>
+      </div>
+    `;
+  } else if(type==='allocate'){
+    // arg is goalId
+    const g = state.goals.find(x=>x.id===arg);
+    modalInner.innerHTML = `
+      <div style="display:flex;justify-content:space-between;align-items:center"><div style="font-weight:700">目標へ振替（ロック） — ${escapeHtml(g.title)}</div><div style="cursor:pointer" onclick="closeModal()">✕</div></div>
+      <div style="margin-top:8px" class="smallmuted">トレジャリー残高: ${state.treasury} JPYC</div>
+      <div style="margin-top:8px" class="smallmuted">振替金額</div>
+      <input id="alloc_amount" type="number" placeholder="例: 1000" />
+      <div class="smallmuted">ロック期間</div>
+      <select id="alloc_days"><option value="30">30日</option><option value="90">90日</option><option value="180">180日</option><option value="360" selected>360日</option></select>
+      <div class="smallmuted">想定APY（年利、%）</div>
+      <input id="alloc_apr" type="number" value="${g.apy||0.5}" step="0.1" />
+      <div style="display:flex;gap:8px;margin-top:8px">
+        <button class="btn btn-ghost" onclick="closeModal()">キャンセル</button>
+        <button class="btn" onclick="confirmAllocate('${g.id}')">振替してロック</button>
+      </div>
+    `;
+  } else if(type==='viewGoal'){
+    const g = state.goals.find(x=>x.id===arg);
+    const items = state.history.filter(h=>h.goalId===g.id);
+    modalInner.innerHTML = `<div style="display:flex;justify-content:space-between;align-items:center"><div style="font-weight:700">${escapeHtml(g.title)} — 詳細</div><div style="cursor:pointer" onclick="closeModal()">✕</div></div>
+      <div style="margin-top:8px" class="smallmuted">目標額: ${g.target} JPYC</div>
+      <div style="margin-top:8px" class="smallmuted">取引一覧</div>
+      <div style="max-height:300px;overflow:auto;margin-top:8px">${items.map(h=>`<div style="padding:8px;border-radius:8px;background:#f8fafc;margin-bottom:8px">
+        <div style="font-weight:600">+${h.amount} JPYC ${h.lockedUntil?'<span class="locked-tag">'+daysRemaining(h.lockedUntil)+'日後解除</span>':''}</div>
+        <div class="smallmuted">${h.note||''} ${h.apr?(' | APY: '+h.apr+'%'):''}</div>
+        <div class="smallmuted">${h.date}</div>
+      </div>`).join('')}</div>
+      <div style="margin-top:8px" class="grid grid-2">
+        <button class="btn btn-ghost" onclick="closeModal()">閉じる</button>
+        <button class="btn" onclick="openModal('allocate','${g.id}')">目標に追加する</button>
+      </div>`;
+  } else if(type==='newGoal'){
+    modalInner.innerHTML = `
+      <div style="display:flex;justify-content:space-between;align-items:center"><div style="font-weight:700">新しい目標を作成</div><div style="cursor:pointer" onclick="closeModal()">✕</div></div>
+      <div style="margin-top:8px" class="smallmuted">タイトル</div>
+      <input id="g_title" type="text" placeholder="例: 旅行用" />
+      <div class="smallmuted">目標額（JPYC）</div>
+      <input id="g_target" type="number" placeholder="例: 30000" />
+      <div class="smallmuted">想定APY（%）</div>
+      <input id="g_apy" type="number" value="0.5" />
+      <div style="display:flex;gap:8px;margin-top:8px">
+        <button class="btn btn-ghost" onclick="closeModal()">キャンセル</button>
+        <button class="btn" onclick="createGoal()">作成</button>
+      </div>`;
+  } else if(type==='manageGoals'){
+    modalInner.innerHTML = `
+      <div style="display:flex;justify-content:space-between;align-items:center"><div style="font-weight:700">目標管理</div><div style="cursor:pointer" onclick="closeModal()">✕</div></div>
+      <div style="margin-top:8px" class="smallmuted">${state.goals.map(g=>`<div style="padding:8px;border-radius:8px;background:#fff;margin-top:8px">
+        <div style="font-weight:600">${escapeHtml(g.title)} — ${g.target} JPYC</div>
+        <div style="margin-top:6px" class="grid grid-2"><button class="btn btn-ghost" onclick="editGoal('${g.id}')">編集</button><button class="btn btn-ghost" onclick="deleteGoal('${g.id}')">削除</button></div>
+      </div>`).join('')}</div>
+      <div style="margin-top:8px" class="smallmuted">※ 削除すると関連取引は残ります</div>
+      <div style="margin-top:8px" class="grid grid-2"><button class="btn btn-ghost" onclick="closeModal()">閉じる</button><button class="btn" onclick="openModal('newGoal')">新規作成</button></div>
+    `;
+  } else if(type==='dao'){
+    modalInner.innerHTML = `
+      <div style="display:flex;justify-content:space-between;align-items:center"><div style="font-weight:700">DAOデータ（エクスポート / インポート）</div><div style="cursor:pointer" onclick="closeModal()">✕</div></div>
+      <div style="margin-top:8px" class="smallmuted">現在のローカルDAO総額: ${state.dao.total||0} JPYC</div>
+      <div style="margin-top:8px" class="smallmuted">エクスポート</div>
+      <textarea id="exportArea" style="width:100%;height:120px">${JSON.stringify({total:state.dao.total,ts:Date.now()})}</textarea>
+      <div style="margin-top:8px" class="smallmuted">インポート（他のユーザーのJSONを貼り付け）</div>
+      <textarea id="importArea" style="width:100%;height:120px"></textarea>
+      <div style="display:flex;gap:8px;margin-top:8px">
+        <button class="btn btn-ghost" onclick="closeModal()">閉じる</button>
+        <button class="btn" onclick="importDao()">インポート反映</button>
+      </div>`;
+  } else if(type==='vote'){
+    modalInner.innerHTML = `
+      <div style="display:flex;justify-content:space-between;align-items:center"><div style="font-weight:700">DAO投票</div><div style="cursor:pointer" onclick="closeModal()">✕</div></div>
+      <div style="margin-top:8px" class="smallmuted">現在の投票: 「寄付」「運用に回す」「利回り強化」</div>
+      <div style="margin-top:8px">
+        <label><input type="radio" name="vote" value="donate" checked/> 寄付に回す</label><br/>
+        <label><input type="radio" name="vote" value="treasury"/> 運用に回す</label><br/>
+        <label><input type="radio" name="vote" value="boost"/> 利回り強化プール</label>
+      </div>
+      <div style="margin-top:8px" class="grid grid-2">
+        <button class="btn btn-ghost" onclick="closeModal()">キャンセル</button>
+        <button class="btn" onclick="castVote()">投票する</button>
+      </div>`;
+  } else if(type==='mission'){
+    modalInner.innerHTML = `
+      <div style="display:flex;justify-content:space-between;align-items:center"><div style="font-weight:700">ミッション</div><div style="cursor:pointer" onclick="closeModal()">✕</div></div>
+      <div style="margin-top:8px" class="smallmuted">毎日/毎週のミッションをクリアすると自動でトレジャリーに入ります</div>
+      <div style="margin-top:10px">${state.missions.map(m=>`<div style="padding:10px;border-radius:10px;background:#f8fafc;margin-top:8px">
+          <div style="font-weight:600">${escapeHtml(m.title)} <span style="font-size:12px;color:${m.active?'#059669':'#9ca3af'}">(${m.period})</span></div>
+          <div class="smallmuted">${m.amount} JPYC</div>
+          <div style="margin-top:8px"><button class="btn btn-ghost" onclick="toggleMission('${m.id}')">${m.active?'無効化':'有効化'}</button>
+          <button class="btn" onclick="claimMission('${m.id}')">今すぐ受け取る</button></div>
+        </div>`).join('')}</div>
+      <div style="margin-top:10px" class="smallmuted">※ 自動化はプロトタイプ上では手動処理です</div>
+    `;
+  }
+}
+
+function closeModal(){ modal.style.display='none'; modalInner.innerHTML=''; }
+
+// confirm add to treasury
+function confirmAddToTreasury(){
+  const amt = Number(document.getElementById('m_amount').value);
+  const cat = document.getElementById('m_cat').value || 'つもり';
+  if(!amt || amt<=0) return alert('正しい金額を入力してください');
+  state.treasury = safeNum(state.treasury) + amt;
+  state.history.unshift({id:genId(), amount:amt, category:cat, date:new Date().toLocaleString(), note:'トレジャリー入金'});
+  saveState(); closeModal(); render();
+}
+function confirmAddQuick(cat){
+  const amt = Number(document.getElementById('m_amount').value);
+  const note = document.getElementById('m_note').value || '';
+  if(!amt || amt<=0) return alert('正しい金額を入力');
+  state.treasury = safeNum(state.treasury) + amt;
+  state.history.unshift({id:genId(), amount:amt, category:cat, date:new Date().toLocaleString(), note:note});
+  saveState(); closeModal(); render();
+}
+
+// ---------- Allocate to Goal (with lock) ----------
+function confirmAllocate(goalId){
+  const amt = Number(document.getElementById('alloc_amount').value);
+  const days = Number(document.getElementById('alloc_days').value);
+  const apr = Number(document.getElementById('alloc_apr').value) || 0;
+  if(!amt || amt<=0) return alert('金額を入力してください');
+  if(amt > safeNum(state.treasury)) return alert('トレジャリー残高が足りません');
+  // reduce treasury
+  state.treasury = safeNum(state.treasury) - amt;
+  // create locked tx assigned to goal
+  const lockedUntil = addDaysIso(days);
+  const tx = {id:genId(), amount:amt, category:'GoalLock', date:new Date().toLocaleString(), goalId:goalId, note:`ロック ${days}日`, lockedUntil: lockedUntil, apr: apr, lockDays: days};
+  state.history.unshift(tx);
+  saveState(); closeModal(); render();
+  alert(`${amt} JPYC を ${days}日間ロックしました（解除予定: ${lockedUntil}）`);
+}
+
+// ---------- Goal management ----------
+function createGoal(){
+  const title = document.getElementById('g_title').value || '新しい目標';
+  const target = Number(document.getElementById('g_target').value) || 0;
+  const apy = Number(document.getElementById('g_apy').value) || 0.5;
+  const g = {id:genId(), title, target, apy};
+  state.goals.push(g);
+  saveState(); closeModal(); render();
+}
+function editGoal(id){
+  const g = state.goals.find(x=>x.id===id);
+  openModal('editG:'+id);
+}
+function deleteGoal(id){
+  state.goals = state.goals.filter(x=>x.id!==id);
+  saveState(); render();
+}
+
+// For edit modal handler (simple)
+function openEditGoal(id){
+  const g = state.goals.find(x=>x.id===id);
+  modal.style.display='flex';
+  modalInner.innerHTML = `<div style="display:flex;justify-content:space-between;align-items:center"><div style="font-weight:700">目標編集</div><div style="cursor:pointer" onclick="closeModal()">✕</div></div>
+    <div style="margin-top:8px" class="smallmuted">タイトル</div><input id="g_e_title" value="${escapeHtml(g.title)}" />
+    <div class="smallmuted">目標額</div><input id="g_e_target" type="number" value="${g.target}" />
+    <div class="smallmuted">想定APY（%）</div><input id="g_e_apy" type="number" value="${g.apy||0.5}" />
+    <div style="display:flex;gap:8px;margin-top:8px"><button class="btn btn-ghost" onclick="closeModal()">キャンセル</button><button class="btn" onclick="saveEditGoal('${g.id}')">保存</button></div>`;
+}
+function saveEditGoal(id){
+  const g = state.goals.find(x=>x.id===id);
+  g.title = document.getElementById('g_e_title').value;
+  g.target = Number(document.getElementById('g_e_target').value);
+  g.apy = Number(document.getElementById('g_e_apy').value);
+  saveState(); closeModal(); render();
+}
+
+// ---------- Missions ----------
+function toggleMission(id){ const m = state.missions.find(x=>x.id===id); m.active = !m.active; saveState(); render(); }
+function claimMission(id){ const m = state.missions.find(x=>x.id===id); if(!m) return; state.treasury = safeNum(state.treasury) + m.amount; state.history.unshift({id:genId(), amount:m.amount, category:'ミッション', date:new Date().toLocaleString(), note:`ミッション: ${m.title}`}); saveState(); render(); alert(`${m.amount} JPYC がトレジャリーに入りました`); }
+
+// ---------- Votes ----------
+function castVote(){ const v = document.querySelector('input[name="vote"]:checked').value; const votes = JSON.parse(localStorage.getItem('tsumori_votes_v1')||'{}'); votes[v] = (votes[v]||0)+1; localStorage.setItem('tsumori_votes_v1', JSON.stringify(votes)); alert('投票しました（ローカル）'); closeModal(); }
+
+// ---------- DAO export/import ----------
+function exportWhole(){
+  const blob = new Blob([JSON.stringify(state,null,2)], {type:'application/json'});
+  const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href=url; a.download='tsumori_state_lock.json'; a.click(); URL.revokeObjectURL(url);
+}
+function importDao(){
+  const txt = document.getElementById('importArea').value;
+  try{ const obj = JSON.parse(txt); if(obj && obj.total!==undefined){ const g = loadGlobal(); g.total = (g.total||0) + Number(obj.total); saveGlobal(g); alert('インポート成功'); closeModal(); render(); } else alert('正しいJSONを貼ってください'); }catch(e){ alert('JSON解析に失敗しました') }
+}
+function saveGlobal(g){ localStorage.setItem('tsumori_global', JSON.stringify(g)); }
+function loadGlobal(){ return JSON.parse(localStorage.getItem('tsumori_global') || JSON.stringify({total:0})); }
+
+// ---------- Badge & Receipt ----------
+function generateBadge(){
+  const total = state.history.reduce((s,h)=>s+(h.amount||0),0);
+  const svg = `<svg xmlns='http://www.w3.org/2000/svg' width='800' height='800'><rect width='100%' height='100%' fill='#fff'/><circle cx='400' cy='240' r='160' fill='#4a90e2'/><text x='400' y='240' font-size='56' fill='#fff' text-anchor='middle' dominant-baseline='middle'>つもりバッジ</text><text x='400' y='420' font-size='40' fill='#111' text-anchor='middle'>累計 ${total} JPYC</text><text x='400' y='470' font-size='22' fill='#6b7280' text-anchor='middle'>${todayStr()}</text></svg>`;
+  const blob = new Blob([svg], {type:'image/svg+xml'}); const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href=url; a.download=`tsumori_badge_${Date.now()}.svg`; a.click(); URL.revokeObjectURL(url);
+}
+function generateReceipt(){
+  const canvas = document.createElement('canvas'); canvas.width=800; canvas.height=1100; const ctx = canvas.getContext('2d');
+  ctx.fillStyle='#fff'; ctx.fillRect(0,0,canvas.width,canvas.height); ctx.fillStyle='#111'; ctx.font='bold 36px sans-serif'; ctx.fillText('つもりレシート',40,80); ctx.font='20px sans-serif'; ctx.fillStyle='#6b7280'; ctx.fillText(`日付: ${new Date().toLocaleString()}`,40,120); ctx.fillStyle='#111'; ctx.font='24px sans-serif'; ctx.fillText(`トレジャリー: ${state.treasury} JPYC`,40,170);
+  ctx.font='20px sans-serif'; ctx.fillStyle='#111'; ctx.fillText('最近の明細:',40,220);
+  state.history.slice(0,10).forEach((h,i)=>{ ctx.fillText(`${h.date}  +${h.amount} JPYC  ${h.category||''} ${h.lockedUntil?(' Locked until '+h.lockedUntil):''}`,40,260+i*34); });
+  const url = canvas.toDataURL('image/png'); const w = window.open(''); w.document.write(`<img src="${url}" style="max-width:100%"/>`);
+}
+
+// ---------- Chart ----------
+function renderChart(){
+  const ctx = chartCanvas.getContext('2d');
+  ctx.clearRect(0,0,chartCanvas.width,chartCanvas.height);
+  const categories = {};
+  state.history.filter(h=>isThisMonth(h.date)).forEach(h=>{ const cat = h.category || 'その他'; categories[cat] = (categories[cat]||0) + h.amount; });
+  const labels = Object.keys(categories);
+  const vals = labels.map(l=>categories[l]);
+  if(vals.length===0){ ctx.fillStyle='#f3f4f6'; ctx.fillRect(0,0,chartCanvas.width,chartCanvas.height); ctx.fillStyle='#9ca3af'; ctx.font='16px sans-serif'; ctx.fillText('今月の活動はまだありません',20,90); return; }
+  const margin=30; const w=chartCanvas.width-margin*2; const h=chartCanvas.height-margin*2; const max=Math.max(...vals); const barW=Math.max(20,(w/vals.length)*0.6);
+  labels.forEach((lab,i)=>{ const x=margin + i*(w/vals.length) + ((w/vals.length)-barW)/2; const barH=Math.round((vals[i]/max)*(h-40)); ctx.fillStyle='#4a90e2'; ctx.fillRect(x,margin + (h-20)-barH,barW,barH); ctx.fillStyle='#111'; ctx.font='12px sans-serif'; ctx.fillText(lab,x,margin + h + 6); ctx.fillStyle='#6b7280'; ctx.font='12px sans-serif'; ctx.fillText(`${vals[i]} JPYC`, x, margin + (h-20)-barH - 6); });
+}
+
+// ---------- Utilities ----------
+function escapeHtml(s){ return String(s||'').replace(/[&<>"']/g, function(m){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m] }) }
+function isThisMonth(dateStr){ try{ const d=new Date(dateStr); const now=new Date(); return d.getFullYear()===now.getFullYear() && d.getMonth()===now.getMonth(); }catch(e){return false} }
+
+// ---------- Import/Export Whole ----------
+function importWhole(fileContent){ try{ const obj = JSON.parse(fileContent); if(obj && obj.history!==undefined){ state = obj; saveState(); render(); alert('インポート完了'); } else alert('正しいフォーマットではありません'); }catch(e){ alert('解析エラー') } }
+
+// ---------- DAO functions ----------
+function exportData(){ const data = {dao:state.dao,ts:Date.now()}; const blob = new Blob([JSON.stringify(data,null,2)],{type:'application/json'}); const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href=url; a.download='tsumori_dao_export.json'; a.click(); URL.revokeObjectURL(url); }
+function importDao(){ const txt = document.getElementById('importArea').value; try{ const obj = JSON.parse(txt); if(obj && obj.total!==undefined){ const g = loadGlobal(); g.total = (g.total||0) + Number(obj.total); saveGlobal(g); alert('インポート成功（ローカル合算）'); closeModal(); render(); } else { alert('正しいJSONを貼ってください') } }catch(e){ alert('JSON解析に失敗しました') } }
+function saveGlobal(g){ localStorage.setItem('tsumori_global', JSON.stringify(g)); }
+function loadGlobal(){ return JSON.parse(localStorage.getItem('tsumori_global') || JSON.stringify({total:0})); }
+
+// ---------- Convert (direct lock demo) ----------
+function openModalConvert(){
+  modal.style.display='flex';
+  modalInner.innerHTML = `<div style="display:flex;justify-content:space-between;align-items:center"><div style="font-weight:700">疑似ロック（直接トレジャリー→ロック）</div><div style="cursor:pointer" onclick="closeModal()">✕</div></div>
+    <div style="margin-top:8px" class="smallmuted">金額（JPYC）</div><input id="lock_amount" type="number" placeholder="例: 1000" />
+    <div class="smallmuted">ロック期間</div><select id="lock_days"><option value="30">30日</option><option value="90">90日</option><option value="180">180日</option><option value="360" selected>360日</option></select>
+    <div class="smallmuted">想定APY（%）</div><input id="lock_apr" type="number" value="0.5" step="0.1" />
+    <div style="display:flex;gap:8px;margin-top:8px"><button class="btn btn-ghost" onclick="closeModal()">キャンセル</button><button class="btn" onclick="confirmDirectLock()">ロック</button></div>`;
+}
+function confirmDirectLock(){
+  const amt = Number(document.getElementById('lock_amount').value);
+  const days = Number(document.getElementById('lock_days').value);
+  const apr = Number(document.getElementById('lock_apr').value) || 0;
+  if(!amt || amt<=0) return alert('金額を入力'); 
+  if(amt > safeNum(state.treasury)) return alert('トレジャリー残高不足');
+  state.treasury = safeNum(state.treasury) - amt;
+  const until = addDaysIso(days);
+  state.history.unshift({id:genId(), amount:amt, category:'LOCKED_DIRECT', date:new Date().toLocaleString(), goalId:null, note:`直接ロック ${days}日`, lockedUntil: until, apr: apr, lockDays: days});
+  saveState(); closeModal(); render();
+  alert(`${amt} JPYC を直接ロックしました（解除予定: ${until}）`);
+}
+
+// ---------- Init & render ----------
+render();
+
+// expose global functions for buttons used in markup
+window.openModal = openModal;
+window.closeModal = closeModal;
+window.quickToTreasury = quickToTreasury;
+window.generateBadge = generateBadge;
+window.generateReceipt = generateReceipt;
+window.exportWhole = exportWhole;
+window.importWhole = importWhole;
+window.openModalConvert = openModalConvert;
+window.claimMission = claimMission;
+window.toggleMission = toggleMission;
+window.castVote = castVote;
+window.importDao = importDao;
+window.confirmAllocate = confirmAllocate;
+window.createGoal = createGoal;
+window.openModal = openModal;
+
+// canvas sizing
+function sizeCanvas(){ chartCanvas.width = chartCanvas.clientWidth * devicePixelRatio; chartCanvas.height = chartCanvas.clientHeight * devicePixelRatio; renderChart(); }
+window.addEventListener('resize', sizeCanvas);
+sizeCanvas();
+
+</script>
+</body>
+</html>
